@@ -292,12 +292,42 @@ async def chat(request: ChatRequest):
         logits, current_state = model.forward(token, current_state)
     
     response_tokens = []
+    
+    # Sampling parameters
+    temperature = 1.0 # Can be adjusted
+    top_p = 0.9 # Can be adjusted
+    
     for _ in range(200): # Limit response length
-        token = torch.argmax(logits).item()
+        # Apply temperature
+        logits = logits / temperature
+        
+        # Top-p sampling
+        probs = F.softmax(logits.float(), dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+        
+        # Remove tokens with cumulative probability above the threshold
+        # We keep at least one token
+        mask = cumulative_probs <= top_p
+        mask[0] = True 
+        
+        sorted_probs = sorted_probs[mask]
+        sorted_indices = sorted_indices[mask]
+        
+        # Rescale probabilities
+        sorted_probs = sorted_probs / sorted_probs.sum()
+        
+        # Sample from the filtered distribution
+        token = torch.multinomial(sorted_probs, num_samples=1).item()
+        token = sorted_indices[token].item()
+        
         if token == 0: # End of text
             break
+            
         response_tokens.append(token)
         logits, current_state = model.forward(token, current_state)
+        
+        # Stop generation if a newline is generated
         if tokenizer.decode([token]).endswith('\n'):
             break
             
